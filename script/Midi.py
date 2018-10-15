@@ -1,10 +1,40 @@
 from midiutil.MidiFile import MIDIFile
+from mido import MidiFile
+from enum import Enum
 import re
 
-TPB = 480 # Ticks per beat
+# MIDIノートのパラメータ種類
+class ParameterType(Enum):
+    PITCH = 1
+    POSITION = 2
+    DURATION = 3
+    VELOCITY = 4
+
+# 4分音符分解能(Ticks Per Beat)
+TPB = 480
+
+# 正規表現による音高の記号表記フォーマット
+PITCH_NOTATION = r'^(?P<pitch>[a-gA-G])(?P<accidental>[b#]?)(?P<octave>[+-]?[0-9])$'
+
+# 正規表現による発音時刻の記号表記フォーマット
+POSITION_NOTATION = r'^(?P<measure>\d+):(?P<beat>[1-4]):(?P<tick>\d+)$'
+
+# 正規表現による音価(長さ)の記号表記フォーマット
+DURATION_NOTATION = r'^(?P<duration>1/32|1/16|1/8|1/4|1/2|1)$'
+
+# 正規表現によるベロシティの記号表記フォーマット
+VELOCITY_NOTATION = r'^(?P<velocity>ppp|pp|p|mp|mf|f|ff|fff)$'
 
 pitch_map = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 }
-time_map = { '1/16': TPB // 4, '1/8': TPB // 2, '1/4': TPB // 1, '1/2': TPB * 2, '1': TPB * 4 }
+accidental_map = { 'b': -1, '': 0, '#': 1 }
+duration_map = { '1/32': TPB // 8, '1/16': TPB // 4, '1/8': TPB // 2, '1/4': TPB, '1/2': TPB * 2, '1': TPB * 4 }
+velocity_map = { 'ppp': 16, 'pp': 32, 'p': 48, 'mp': 64, 'mf': 80, 'f': 96, 'ff': 112, 'fff': 127 }
+notation_map = {
+    ParameterType.PITCH: PITCH_NOTATION,
+    ParameterType.POSITION: POSITION_NOTATION,
+    ParameterType.DURATION: DURATION_NOTATION,
+    ParameterType.VELOCITY: VELOCITY_NOTATION
+}
 
 class Midi:
     def __init__(self):
@@ -12,30 +42,59 @@ class Midi:
         self.sequence.addTrackName(0, 0, "")
 
     def add_note(self, pitch, position, duration, velocity):
-        if isinstance(pitch, str):
-            pitch = self.__note_name_to_number(pitch)
-        if isinstance(position, str):
-            position = self.__mbt_to_ticks(position)
-        if isinstance(duration, str):
-            duration = self.__time_to_ticks(duration)
+        if self.check_notation(pitch, ParameterType.PITCH):
+            pitch = self.pitch_symbol_to_number(pitch)
+        if self.check_notation(position, ParameterType.POSITION):
+            position = self.position_symbol_to_number(position)
+        if self.check_notation(duration, ParameterType.DURATION):
+            duration = self.duration_symbol_to_number(duration)
+        if self.check_notation(velocity, ParameterType.VELOCITY):
+            velocity = self.velocity_symbol_to_number(velocity)
         self.sequence.addNote(0, 0, pitch, position, duration, velocity)
 
-    def __note_name_to_number(self, note_name):
-        match = re.match(r'(?P<pitch>[a-gA-G])(?P<octave>\d)', note_name)
-        pitch = int(pitch_map[match.group('pitch').upper()])
+    @staticmethod
+    def check_notation(parameter, parameter_type):
+        _parameter = str(parameter)
+        return re.match(notation_map[parameter_type], _parameter)
+
+    @staticmethod
+    def pitch_symbol_to_number(pitch):
+        _pitch = str(pitch)
+        match = re.match(PITCH_NOTATION, _pitch)
+        pitch = pitch_map[match.group('pitch').upper()]
+        offset = accidental_map[match.group('accidental')]
         octave = int(match.group('octave'))
-        return 12 * (octave + 2) + pitch
+        return 12 * (octave + 1) + pitch + offset
 
-    def __mbt_to_ticks(self, mbt):
-        _mbt = mbt.split(':')
-        m = int(_mbt[0])
-        b = int(_mbt[1])
-        t = int(_mbt[2])
-        return ((m - 1) * (TPB * 4)) + ((b - 1) * TPB) + t
+    @staticmethod
+    def position_symbol_to_number(position):
+        _position = str(position)
+        match = re.match(POSITION_NOTATION, _position)
+        measure = int(match.group('measure'))
+        beat = int(match.group('beat'))
+        tick = int(match.group('tick'))
+        return ((measure - 1) * (TPB * 4)) + ((beat - 1) * TPB) + tick
 
-    def __time_to_ticks(self, time):
-        return time_map[time]
+    @staticmethod
+    def duration_symbol_to_number(duration):
+        _duration = str(duration)
+        match = re.match(DURATION_NOTATION, _duration)
+        return duration_map[match.group('duration')]
+
+    @staticmethod
+    def velocity_symbol_to_number(velocity):
+        _velocity = str(velocity)
+        match = re.match(VELOCITY_NOTATION, _velocity)
+        return velocity_map[match.group('velocity')]
 
     def write_to_file(self, path):
         with open(path, 'wb') as file:
             self.sequence.writeFile(file)
+
+    @staticmethod
+    def show_midi_file(path):
+        midi = MidiFile(path)
+        for track in midi.tracks:
+            print(track)
+            for event in track:
+                print(event)
